@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="fa" dir="ltr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="theme-color" content="#000000">
+<meta name="screen-orientation" content="landscape">
+<title>SpeedControl</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;user-select:none;-webkit-user-select:none;touch-action:manipulation}
+html,body{height:100%;background:#000;color:#ff8c1a;font-family:Arial,Helvetica,sans-serif;overflow:hidden}
+#app{display:flex;position:relative;height:100%;flex-direction:column;container-type:size}
+#main{flex:1;display:flex;min-height:0}
+.panel{width:50%;display:flex;flex-direction:column;align-items:center;justify-content:center;min-width:0}
+#digital{border-right:2px solid #2b1800}
+#num{font-size:min(42cqh,24cqw);font-weight:900;line-height:1;font-variant-numeric:tabular-nums;color:#ff8c1a;text-shadow:0 0 28px rgba(255,140,26,.45)}
+#num.over{color:#ff3b30;text-shadow:0 0 28px rgba(255,59,48,.6);animation:bl 1s infinite}
+@keyframes bl{50%{opacity:.5}}
+#unit{font-size:min(7cqh,4cqw);letter-spacing:.2em;color:#b35d00;margin-top:1cqh}
+#gauge svg{width:98%;height:98%}
+#bar{height:27cqh;min-height:84px;display:flex;align-items:center;justify-content:center;gap:5cqw;border-top:2px solid #2b1800;background:#0c0905;direction:rtl;padding:0 2cqw}
+.lb{font-size:min(5.4cqh,3.2cqw);color:#ffb066;font-weight:700}
+#lim{font-size:min(15cqh,9cqw);font-weight:900;color:#ff8c1a;min-width:3ch;text-align:center;direction:ltr;font-variant-numeric:tabular-nums}
+#pm{display:flex;flex-direction:column;gap:1.2cqh;height:82%}
+#pm button{flex:1;width:min(16cqh,12cqw);font-size:min(8cqh,5.5cqw);font-weight:900;line-height:1;background:#ff8c1a;color:#000;border:0;border-radius:12px}
+#pm button:active{background:#ffc78f}
+#chkw{display:flex;align-items:center;gap:1.2cqw;cursor:pointer}
+#chk{width:min(7cqh,5cqw);height:min(7cqh,5cqw);accent-color:#ff8c1a}
+#ask{display:none;position:absolute;inset:0;z-index:5;background:rgba(0,0,0,.95);flex-direction:column;align-items:center;justify-content:center;gap:3cqh;text-align:center;direction:rtl}
+#ask.on{display:flex}
+#ask b{font-size:min(14cqh,8cqw);font-weight:900;color:#ff8c1a}
+#ask p{font-size:min(6cqh,3.4cqw);color:#ffb066}
+#askb{font-size:min(7cqh,4cqw);font-weight:900;background:#ff8c1a;color:#000;border:0;border-radius:14px;padding:1.6cqh 8cqw}
+@media (orientation:portrait){#app{position:fixed;top:0;left:0;width:100vh;width:100dvh;height:100vw;height:100dvw;transform-origin:0 0;transform:rotate(90deg) translateY(-100%)}}
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="main">
+    <div class="panel" id="digital">
+      <div id="num">0</div>
+      <div id="unit">km/h</div>
+    </div>
+    <div class="panel" id="gauge"></div>
+  </div>
+  <div id="bar">
+    <span class="lb">محدودیت سرعت</span>
+    <div id="lim">120</div>
+    <div id="pm"><button id="plus">+</button><button id="minus">−</button></div>
+    <label id="chkw"><input type="checkbox" id="chk" checked><span class="lb">هشدار صوتی</span></label>
+  </div>
+  <div id="ask"><b>GPS قطع شد</b><p>لطفاً GPS را فعال کنید</p><button id="askb">تأیید</button></div>
+</div>
+
+<script>
+const $=id=>document.getElementById(id);
+const C=200,R=175,A0=135,SW=270;
+let limit=120,alarmOn=true,target=0,shown=0,lastFix=0,prev=null,lastBeep=-1e9,ac=null,watchId=null,hadFix=false,lost=false;
+try{const s=localStorage.getItem('sc_lim');if(s)limit=Math.min(200,Math.max(5,parseInt(s)||120));const a=localStorage.getItem('sc_alarm');if(a!==null)alarmOn=a==='1'}catch(e){}
+
+const ang=v=>A0+v/200*SW;
+const pt=(r,a)=>{a=a*Math.PI/180;return[C+r*Math.cos(a),C+r*Math.sin(a)]};
+const arc=(r,a0,a1)=>{const p=pt(r,a0),q=pt(r,a1);return'M'+p[0]+' '+p[1]+'A'+r+' '+r+' 0 '+(a1-a0>180?1:0)+' 1 '+q[0]+' '+q[1]};
+
+// build analog gauge
+let g='<path d="'+arc(R,A0,A0+SW)+'" stroke="#2a1700" stroke-width="12" fill="none" stroke-linecap="round"/><path id="pa" fill="none" stroke="#ff8c1a" stroke-width="12" stroke-linecap="round"/>';
+for(let v=0;v<=200;v+=10){
+  const M=v%20===0,a=ang(v),p=pt(M?160:164,a),q=pt(148,a);
+  g+='<line x1="'+p[0]+'" y1="'+p[1]+'" x2="'+q[0]+'" y2="'+q[1]+'" stroke="'+(M?'#ff8c1a':'#7a4a14')+'" stroke-width="'+(M?4:2)+'"/>';
+  if(M){const t=pt(124,a);g+='<text x="'+t[0]+'" y="'+t[1]+'" fill="#ffb066" font-size="20" font-weight="700" text-anchor="middle" dominant-baseline="central">'+v+'</text>'}
+}
+g+='<line id="lm" stroke="#ff3b30" stroke-width="5" stroke-linecap="round"/>';
+g+='<text x="200" y="300" fill="#b35d00" font-size="22" font-weight="700" text-anchor="middle" letter-spacing="4">km/h</text>';
+g+='<g id="nd"><polygon points="188,193 346,200 188,207" fill="#ff8c1a"/></g><circle cx="200" cy="200" r="15" fill="#ff8c1a"/><circle cx="200" cy="200" r="6" fill="#000"/>';
+$('gauge').innerHTML='<svg viewBox="0 0 400 400" preserveAspectRatio="xMidYMid meet">'+g+'</svg>';
+
+function setLim(n){
+  limit=Math.min(200,Math.max(5,n));
+  $('lim').textContent=limit;
+  const a=ang(limit),p=pt(188,a),q=pt(150,a),l=$('lm');
+  l.setAttribute('x1',p[0]);l.setAttribute('y1',p[1]);l.setAttribute('x2',q[0]);l.setAttribute('y2',q[1]);
+  try{localStorage.setItem('sc_lim',limit)}catch(e){}
+}
+setLim(limit);
+$('chk').checked=alarmOn;
+$('plus').onclick=()=>setLim(limit+5);
+$('minus').onclick=()=>setLim(limit-5);
+$('chk').onchange=e=>{alarmOn=e.target.checked;try{localStorage.setItem('sc_alarm',alarmOn?1:0)}catch(_){}};
+document.addEventListener('contextmenu',e=>e.preventDefault());
+
+// warning sound
+function beep(){
+  if(!ac)return;
+  try{
+    if(ac.state==='suspended')ac.resume();
+    [0,.28].forEach((d,i)=>{
+      const o=ac.createOscillator(),gn=ac.createGain(),t=ac.currentTime+d;
+      o.type='square';o.frequency.value=i?988:784;
+      gn.gain.setValueAtTime(.0001,t);
+      gn.gain.exponentialRampToValueAtTime(.5,t+.02);
+      gn.gain.exponentialRampToValueAtTime(.0001,t+.22);
+      o.connect(gn);gn.connect(ac.destination);o.start(t);o.stop(t+.25);
+    });
+  }catch(e){}
+}
+
+// GPS
+function showAsk(on){$('ask').classList.toggle('on',on)}
+function hav(a,b,c,d){const r=Math.PI/180,x=Math.sin((c-a)*r/2),y=Math.sin((d-b)*r/2),h=x*x+Math.cos(a*r)*Math.cos(c*r)*y*y;return 12742000*Math.asin(Math.sqrt(h))}
+function onPos(p){
+  const c=p.coords;let v=c.speed;
+  if(v==null||isNaN(v)){
+    v=0;
+    if(prev&&(c.accuracy||0)<80){const dt=(p.timestamp-prev.t)/1000;if(dt>0)v=hav(prev.la,prev.lo,c.latitude,c.longitude)/dt}
+  }
+  prev={la:c.latitude,lo:c.longitude,t:p.timestamp};
+  let k=v*3.6;if(k<2)k=0;
+  target=Math.min(200,k);
+  lastFix=performance.now();
+  hadFix=true;lost=false;
+}
+function onErr(e){target=0;lost=true;if(hadFix){hadFix=false;showAsk(true)}}
+function startGps(){
+  if(!navigator.geolocation)return;
+  if(watchId!==null)navigator.geolocation.clearWatch(watchId);
+  watchId=navigator.geolocation.watchPosition(onPos,onErr,{enableHighAccuracy:true,maximumAge:0,timeout:30000});
+}
+
+// main loop
+function frame(t){
+  if(lastFix&&t-lastFix>8000)target=0;
+  shown+=(target-shown)*.12;
+  if(Math.abs(target-shown)<.05)shown=target;
+  const v=Math.min(200,shown),r=Math.round(v);
+  $('nd').setAttribute('transform','rotate('+ang(v)+' 200 200)');
+  $('pa').setAttribute('d',v>.5?arc(R,A0,ang(v)):'');
+  $('num').textContent=r;
+  const over=alarmOn&&Math.round(target)>limit;
+  $('num').classList.toggle('over',over);
+  if(over){if(t-lastBeep>=2000){beep();lastBeep=t}}else lastBeep=-1e9;
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+
+// start immediately
+function unlock(){
+  try{if(!ac)ac=new(window.AudioContext||window.webkitAudioContext)();ac.resume()}catch(e){}
+  try{if(!document.fullscreenElement)document.documentElement.requestFullscreen().then(()=>screen.orientation.lock('landscape')).catch(()=>{})}catch(e){}
+}
+document.addEventListener('pointerdown',unlock,{once:true});
+try{screen.orientation.lock('landscape').catch(()=>{})}catch(e){}
+try{if(navigator.wakeLock)navigator.wakeLock.request('screen').catch(()=>{})}catch(e){}
+$('askb').onclick=()=>showAsk(false);
+setInterval(()=>{if(lost)startGps()},3000);
+startGps();
+</script>
+</body>
+</html>
